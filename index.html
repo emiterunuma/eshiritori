@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>えしりとり（Firebase 完全安定版）</title>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+<style>
+body{font-family:sans-serif;text-align:center;}
+canvas{border:2px solid black;touch-action:none;}
+.color-btn{
+  width:26px;height:26px;border-radius:50%;
+  border:2px solid #333;cursor:pointer;margin:2px;
+}
+#gallery{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;}
+.gallery-item img{width:120px;height:120px;border:1px solid #ccc;}
+</style>
+</head>
+<body>
+
+<h2>🎨 えしりとり</h2>
+<p id="turnText">1人目の番です</p>
+
+名前：
+<input id="playerName" placeholder="名無し"><br><br>
+
+参加PW：
+<input type="password" id="joinPw">
+<button onclick="join()">参加</button>
+<span id="joinMsg" style="color:red"></span>
+
+<br><br>
+
+<canvas id="canvas" width="320" height="320"></canvas>
+
+<div>
+  <button class="color-btn" style="background:black" onclick="setColor('black')"></button>
+  <button class="color-btn" style="background:red" onclick="setColor('red')"></button>
+  <button class="color-btn" style="background:blue" onclick="setColor('blue')"></button>
+  <button class="color-btn" style="background:green" onclick="setColor('green')"></button>
+  <input type="color" onchange="setColor(this.value)">
+</div>
+
+ペン太さ
+<input type="range" min="1" max="30" value="4" oninput="setPenSize(this.value)">
+<br>
+消しゴム太さ
+<input type="range" min="5" max="50" value="20" oninput="setEraserSize(this.value)">
+
+<br><br>
+
+<button onclick="usePen()">✏️ ペン</button>
+<button onclick="useEraser()">🧽 消しゴム</button>
+<button onclick="clearCanvas()">🧹 クリア</button>
+<button onclick="nextTurn()">➡ 次の人へ</button>
+
+<hr>
+
+<h3>🔒 管理</h3>
+<input type="password" id="adminPw" placeholder="管理PW">
+<button onclick="adminClear()">全消去</button>
+
+<h3>🖼 ギャラリー</h3>
+<div id="gallery"></div>
+
+<script>
+/* ===== パスワード ===== */
+const JOIN_PASSWORD="202518";
+const ADMIN_PASSWORD="6115";
+
+/* ===== Firebase ===== */
+firebase.initializeApp({
+  apiKey: "AIzaSyD3WjjGth-_12Kq50XSFNs3m7xQ_ayqBqo",
+  authDomain: "eshiritori-bfb8c.firebaseapp.com",
+  databaseURL: "https://eshiritori-bfb8c-default-rtdb.firebaseio.com",
+  projectId: "eshiritori-bfb8c",
+  storageBucket: "eshiritori-bfb8c.firebasestorage.app",
+  messagingSenderId: "632312412322",
+  appId: "1:632312412322:web:70d2e0bdb51845a23b7ffb"
+});
+
+const db = firebase.database();
+const drawRef = db.ref("draw");
+const galleryRef = db.ref("gallery");
+const turnRef = db.ref("turn");
+
+/* ===== Canvas ===== */
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+ctx.lineCap="round";
+
+let canDraw=false;
+let drawing=false;
+let lastX=0,lastY=0;
+let penSize=4, eraserSize=20;
+let isEraser=false;
+let currentColor="black";
+
+/* ===== 初期ターン保証 ===== */
+turnRef.once("value",s=>{
+  if(!s.exists()) turnRef.set(1);
+});
+
+/* ===== 参加 ===== */
+function join(){
+  if(joinPw.value===JOIN_PASSWORD){
+    canDraw=true;
+    joinMsg.textContent="参加できます";
+  }else{
+    joinMsg.textContent="パスワードが違います";
+  }
+}
+
+/* ===== 描画 ===== */
+function start(x,y){
+  if(!canDraw)return;
+  drawing=true;
+  lastX=x; lastY=y;
+}
+function move(x,y){
+  if(!drawing)return;
+  ctx.beginPath();
+  ctx.moveTo(lastX,lastY);
+  ctx.lineTo(x,y);
+  ctx.stroke();
+
+  drawRef.push({
+    x1:lastX,y1:lastY,x2:x,y2:y,
+    color:ctx.strokeStyle,
+    size:ctx.lineWidth,
+    mode:ctx.globalCompositeOperation
+  });
+
+  lastX=x; lastY=y;
+}
+function stop(){ drawing=false; }
+
+canvas.onmousedown=e=>start(e.offsetX,e.offsetY);
+canvas.onmousemove=e=>move(e.offsetX,e.offsetY);
+canvas.onmouseup=stop;
+canvas.onmouseleave=stop;
+
+canvas.addEventListener("touchstart",e=>{
+  e.preventDefault();
+  const t=e.touches[0],r=canvas.getBoundingClientRect();
+  start(t.clientX-r.left,t.clientY-r.top);
+});
+canvas.addEventListener("touchmove",e=>{
+  e.preventDefault();
+  const t=e.touches[0],r=canvas.getBoundingClientRect();
+  move(t.clientX-r.left,t.clientY-r.top);
+});
+canvas.addEventListener("touchend",stop);
+
+/* ===== ペン ===== */
+function setColor(c){
+  currentColor=c;
+  ctx.strokeStyle=c;
+  ctx.globalCompositeOperation="source-over";
+  ctx.lineWidth=penSize;
+  isEraser=false;
+}
+function setPenSize(v){
+  penSize=v;
+  if(!isEraser) ctx.lineWidth=v;
+}
+function setEraserSize(v){
+  eraserSize=v;
+  if(isEraser) ctx.lineWidth=v;
+}
+function usePen(){
+  isEraser=false;
+  ctx.globalCompositeOperation="source-over";
+  ctx.lineWidth=penSize;
+  ctx.strokeStyle=currentColor;
+}
+function useEraser(){
+  isEraser=true;
+  ctx.globalCompositeOperation="destination-out";
+  ctx.lineWidth=eraserSize;
+}
+
+/* ===== 同期描画 ===== */
+drawRef.on("child_added",s=>{
+  const d=s.val();
+  ctx.strokeStyle=d.color;
+  ctx.lineWidth=d.size;
+  ctx.globalCompositeOperation=d.mode;
+  ctx.beginPath();
+  ctx.moveTo(d.x1,d.y1);
+  ctx.lineTo(d.x2,d.y2);
+  ctx.stroke();
+});
+
+/* ===== クリア ===== */
+function clearCanvas(){
+  drawRef.remove();
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+}
+
+/* ===== 次の人へ ===== */
+
+function nextTurn(){
+  if(!canDraw) return;
+
+  const name = playerName.value || "名無し";
+
+  // ① 先に画像を確定
+  const imgData = canvas.toDataURL("image/png");
+
+  // ② ギャラリー保存（確実）
+  galleryRef.push({
+    name: name,
+    img: imgData,
+    time: Date.now()
+  }).then(() => {
+
+    // ③ ターンを進める（transactionで安全）
+    turnRef.transaction(current => {
+      return (current || 1) + 1;
+    });
+
+    // ④ 最後にクリア
+    drawRef.remove();
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    playerName.value="";
+
+  }).catch(err=>{
+    alert("保存に失敗しました");
+    console.error(err);
+  });
+}
+
+/* ===== ターン表示 ===== */
+turnRef.on("value",s=>{
+  turnText.textContent=`${s.val()}人目の番です`;
+});
+
+/* ===== ギャラリー表示 ===== */
+galleryRef.on("value",s=>{
+  gallery.innerHTML="";
+  s.forEach(c=>{
+    const d=c.val();
+    const div=document.createElement("div");
+    div.className="gallery-item";
+    div.innerHTML=`<p>${d.name}</p><img src="${d.img}">`;
+    gallery.appendChild(div);
+  });
+});
+
+/* ===== 管理 ===== */
+function adminClear(){
+  if(adminPw.value!==ADMIN_PASSWORD){
+    alert("管理PWが違います"); return;
+  }
+  drawRef.remove();
+  galleryRef.remove();
+  turnRef.set(1);
+  gallery.innerHTML="";
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+}
+</script>
+
+</body>
+</html>
